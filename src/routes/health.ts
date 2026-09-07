@@ -2,16 +2,11 @@ import {
   type FastifyPluginAsyncZodOpenApi,
   type FastifyZodOpenApiSchema,
 } from 'fastify-zod-openapi'
-import * as z from 'zod/v4'
 
-const healthResponseSchema = z
-  .object({
-    status: z.literal('ok'),
-  })
-  .meta({
-    id: 'HealthResponse',
-    description: 'Service health status',
-  })
+import {
+  getHealthStatus,
+  healthResponseSchema,
+} from '../application/health.js'
 
 export const healthRoutes: FastifyPluginAsyncZodOpenApi = async (app) => {
   app.get(
@@ -25,6 +20,6 @@ export const healthRoutes: FastifyPluginAsyncZodOpenApi = async (app) => {
         },
       } satisfies FastifyZodOpenApiSchema,
     },
-    async () => ({ status: 'ok' as const }),
+    async () => getHealthStatus(),
   )
 }

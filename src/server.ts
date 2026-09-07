@@ -34,6 +34,7 @@ async function start(): Promise<void> {
   const app = await buildApp({
     database,
     logger: createLoggerOptions(config.NODE_ENV),
+    mcpAllowedHosts: config.MCP_ALLOWED_HOSTS,
   })
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {

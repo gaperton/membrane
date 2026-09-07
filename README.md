@@ -1,6 +1,6 @@
 # Membrane
 
-REST service built with Fastify, TypeScript, Zod, Kysely, and embedded
+REST and MCP service built with Fastify, TypeScript, Zod, Kysely, and embedded
 PostgreSQL through PGlite.
 
 ## Requirements
@@ -23,8 +23,29 @@ data in `./data/pglite`. Supported environment variables are listed in
 Available endpoints:
 
 - `GET /health` — service health check
+- `GET|POST|DELETE /mcp` — MCP Streamable HTTP endpoint
 - `/docs` — Swagger UI
 - `/docs/json` — OpenAPI 3.1 document
+
+## MCP
+
+MCP clients connect to `http://localhost:3000/mcp`. The server currently
+exposes one read-only tool:
+
+- `health` — returns the same `{ "status": "ok" }` application result used by
+  the REST health endpoint.
+
+The MCP transport is stateless and creates an isolated MCP server for each HTTP
+request. The endpoint is intentionally hidden from the OpenAPI document because
+it implements the MCP Streamable HTTP protocol rather than a conventional REST
+operation.
+
+`MCP_ALLOWED_HOSTS` is a comma-separated allow-list of hostnames, without schemes
+or ports, used for both `Host` and browser `Origin` validation. It defaults to
+`localhost,127.0.0.1,[::1]`. Add the service's real hostname before exposing the
+endpoint outside local development. These checks protect the HTTP boundary from
+DNS rebinding and cross-site requests; they are not authentication, so deploy an
+authentication layer before making the MCP endpoint publicly reachable.
 
 ## Checks
 
@@ -71,8 +92,13 @@ src/
   app.ts                  Fastify app factory
   server.ts               Process entrypoint and graceful shutdown
   config.ts               Zod environment schema
-  routes/health.ts        Health endpoint and response DTO
+  application/health.ts   Shared health application operation and DTO shape
+  routes/health.ts        REST health contract and handler
+  mcp/server.ts           MCP server and tool registration
+  mcp/routes.ts           Streamable HTTP transport and request protection
   db/                     Kysely, PGlite, and migrations
 tests/
   health.test.ts          HTTP and OpenAPI integration test
+  mcp-http.test.ts        MCP HTTP transport and security integration tests
+  mcp-server.test.ts      MCP tool contract test
 ```

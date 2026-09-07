@@ -13,11 +13,17 @@ import {
 import type { Kysely } from 'kysely'
 
 import type { Database } from './db/types.js'
+import { createMembraneMcpHttpHandler } from './mcp/server.js'
+import {
+  defaultMcpAllowedHosts,
+  mcpRoutes,
+} from './mcp/routes.js'
 import { healthRoutes } from './routes/health.js'
 
 export interface BuildAppOptions {
   database: Kysely<Database>
   logger?: FastifyServerOptions['logger']
+  mcpAllowedHosts?: string[]
 }
 
 export async function buildApp(
@@ -49,6 +55,15 @@ export async function buildApp(
     routePrefix: '/docs',
   })
   await app.register(healthRoutes)
+
+  const mcpHandler = createMembraneMcpHttpHandler()
+  app.addHook('onClose', async () => {
+    await mcpHandler.close()
+  })
+  await app.register(mcpRoutes, {
+    allowedHosts: options.mcpAllowedHosts ?? defaultMcpAllowedHosts,
+    handler: mcpHandler,
+  })
 
   return app
 }
