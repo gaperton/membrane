@@ -1,51 +1,52 @@
 # Membrane
 
-REST-сервис на Fastify, TypeScript, Zod, Kysely и embedded PostgreSQL через
-PGlite.
+REST service built with Fastify, TypeScript, Zod, Kysely, and embedded
+PostgreSQL through PGlite.
 
-## Требования
+## Requirements
 
-- Node.js 24 LTS (точная локальная версия указана в `.node-version`)
+- Node.js 24 LTS (the exact local version is specified in `.node-version`)
 - npm
-- PM2 на production-хосте
+- PM2 on the production host
 
-## Локальный запуск
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-По умолчанию сервис слушает `http://localhost:3000`, а данные PGlite хранит в
-`./data/pglite`. Поддерживаемые переменные окружения перечислены в
+By default, the service listens on `http://localhost:3000` and stores PGlite
+data in `./data/pglite`. Supported environment variables are listed in
 `.env.example`.
 
-Доступные endpoints:
+Available endpoints:
 
-- `GET /health` — проверка состояния сервиса
+- `GET /health` — service health check
 - `/docs` — Swagger UI
 - `/docs/json` — OpenAPI 3.1 document
 
-## Проверки
+## Checks
 
 ```bash
 npm run check
 ```
 
-Команда последовательно запускает TypeScript typecheck, тесты Vitest и
-production build. HTTP-тесты используют встроенный `Fastify app.inject()` и
-отдельную in-memory PGlite-базу.
+This command runs the TypeScript type check, Vitest suite, and production build
+in sequence. HTTP tests use the built-in `Fastify app.inject()` method and an
+isolated in-memory PGlite database.
 
-## Миграции
+## Migrations
 
 ```bash
 npm run migrate
 ```
 
-Миграции выполняются Kysely Migrator. При обычном запуске сервер также применяет
-ожидающие миграции до начала прослушивания порта.
+Migrations are managed by Kysely Migrator. During normal startup, the server
+also applies pending migrations before it begins listening on the configured
+port.
 
-## Production и PM2
+## Production and PM2
 
 ```bash
 npm ci
@@ -54,24 +55,24 @@ npm run migrate
 pm2 start ecosystem.config.cjs
 ```
 
-PGlite является embedded-базой и владеет своим каталогом данных внутри одного
-процесса. Поэтому `ecosystem.config.cjs` намеренно использует `fork` и
-`instances: 1`. Нельзя переключать этот сервис в PM2 cluster mode с общим
-`PGLITE_DATA_DIR`; для нескольких процессов или хостов потребуется отдельный
-PostgreSQL-сервер.
+PGlite is an embedded database that owns its data directory within one process.
+For this reason, `ecosystem.config.cjs` deliberately uses `fork` mode and
+`instances: 1`. Do not run this service in PM2 cluster mode with a shared
+`PGLITE_DATA_DIR`; multiple processes or hosts require a separate PostgreSQL
+server.
 
-Production-логи выводятся как structured JSON через встроенный Pino Fastify.
-В development они форматируются пакетом `pino-pretty`.
+Production logs are emitted as structured JSON through Fastify's built-in Pino
+logger. During local development, `pino-pretty` formats them for readability.
 
-## Структура
+## Project structure
 
 ```text
 src/
   app.ts                  Fastify app factory
-  server.ts               process entrypoint и graceful shutdown
-  config.ts               Zod-схема окружения
-  routes/health.ts        health endpoint и его DTO
-  db/                     Kysely, PGlite и миграции
+  server.ts               Process entrypoint and graceful shutdown
+  config.ts               Zod environment schema
+  routes/health.ts        Health endpoint and response DTO
+  db/                     Kysely, PGlite, and migrations
 tests/
-  health.test.ts          HTTP/OpenAPI integration test
+  health.test.ts          HTTP and OpenAPI integration test
 ```
