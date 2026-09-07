@@ -11,7 +11,8 @@ TypeScript, Fastify, Zod, Kysely, and PGlite. Fastify owns the HTTP and logging
 boundaries. Zod schemas define runtime REST contracts and generate the OpenAPI
 3.1 document. The MCP server exposes application operations as tools through a
 Streamable HTTP endpoint. Kysely provides typed database access over an embedded
-PGlite database.
+PGlite database. A React single-page application built with Vite and MUI is
+served by the same Fastify process from `dist/client/`.
 
 The main dependency flow is:
 
@@ -19,11 +20,15 @@ The main dependency flow is:
 process entrypoint
   -> configuration and database initialization
   -> application composition
-  -> Fastify REST and MCP transport plugins
+  -> Fastify REST, MCP, and static client transport plugins
   -> application/database operations
   -> Kysely
   -> PGlite
 ```
+
+The browser client is a separate build target that consumes the same HTTP
+surface. It may import transport-neutral contracts from `src/application/`, but
+nothing under `src/` may import from `client/`.
 
 Dependencies should continue to point inward from entrypoints and transport
 code toward application and persistence code. Lower-level modules must not
@@ -39,9 +44,23 @@ import the process entrypoint.
 ├── package-lock.json         Reproducible npm dependency graph
 ├── tsconfig.json             Strict TypeScript settings for source and tests
 ├── tsconfig.build.json       Production compilation settings
+├── vitest.config.ts          Test runner globals and timeouts
 ├── .node-version             Exact local Node.js version
 ├── .env.example              Supported environment variables and defaults
 ├── ecosystem.config.cjs      Single-process PM2 configuration
+├── client/
+│   ├── index.html            Single-page application document
+│   ├── vite.config.ts        Client build, dev server, and API proxy
+│   ├── tsconfig.json         Browser TypeScript settings for client sources
+│   ├── tsconfig.node.json    TypeScript settings for the Vite config itself
+│   └── src/
+│       ├── main.tsx          React root, theme provider, and baseline styles
+│       ├── App.tsx           Application shell and page layout
+│       ├── theme.ts          MUI theme and colour schemes
+│       ├── api/
+│       │   ├── health.ts     Typed `GET /health` reader
+│       │   └── useHealth.ts  Health request state and refresh hook
+│       └── components/       Presentational MUI components
 ├── src/
 │   ├── server.ts             Runtime entrypoint and process lifecycle
 │   ├── app.ts                Fastify composition root and application factory
@@ -49,7 +68,8 @@ import the process entrypoint.
 │   ├── application/
 │   │   └── health.ts         Transport-neutral health operation and DTO shape
 │   ├── routes/
-│   │   └── health.ts         Health HTTP contract and handler
+│   │   ├── health.ts         Health HTTP contract and handler
+│   │   └── client.ts         Static hosting for the built client
 │   ├── mcp/
 │   │   ├── server.ts         MCP server factory and tool registration
 │   │   └── routes.ts         Streamable HTTP adapter and request protection
@@ -65,6 +85,7 @@ import the process entrypoint.
 │       └── fastify.d.ts      Fastify instance type augmentation
 └── tests/
     ├── health.test.ts        HTTP and OpenAPI integration contract
+    ├── client.test.ts        Static hosting and API/shell boundary contract
     ├── database.test.ts      Persistent database startup and migration test
     ├── mcp-http.test.ts      MCP HTTP transport and security contract
     └── mcp-server.test.ts    MCP tool discovery and invocation contract
@@ -73,7 +94,8 @@ import the process entrypoint.
 The following directories are generated or local-only and must remain ignored:
 
 - `node_modules/` contains installed dependencies.
-- `dist/` contains compiled production JavaScript and declarations.
+- `dist/` contains compiled production JavaScript, declarations, and the
+  client bundle in `dist/client/`.
 - `coverage/` contains generated test coverage.
 - `data/` contains the local persistent PGlite database.
 
@@ -109,6 +131,7 @@ The composition order matters:
 4. Register the Zod/OpenAPI and Swagger plugins.
 5. Register REST route plugins.
 6. Create and register the MCP handler and its scoped transport plugin.
+7. Register static client hosting last, so it can never shadow an API route.
 
 The application owns the injected database and MCP handler lifetimes after
 construction. Closing the Fastify instance must close both through `onClose`
@@ -165,6 +188,45 @@ authentication and authorization before exposing MCP tools to untrusted
 networks, especially when introducing tools that access sensitive data or cause
 side effects.
 
+### Static client hosting: `src/routes/client.ts`
+
+`clientRoutes` serves the built single-page application and is registered last in
+`buildApp()`, only when `clientDistDir` is supplied. It owns two concerns:
+
+- serving `dist/client/` through `@fastify/static` with `wildcard: false`, so
+  the plugin's own not-found handler still runs for unmatched paths;
+- resolving unknown client-side routes to the application shell.
+
+The shell fallback must stay narrow. A request only receives `index.html` when
+it is a `GET` or `HEAD`, it accepts HTML, and its path is not below an API
+prefix. Every other unmatched request keeps its JSON 404, so a mistyped API path
+never returns a page. Add new API prefixes to `apiPrefixes` when introducing a
+route surface outside `/health`, `/mcp`, and `/docs`.
+
+Registration is skipped, with a warning, when the bundle is absent. This keeps
+`npm run dev:server` usable on its own while Vite serves the client. Hashed
+files under `assets/` are sent as immutable; the shell is sent as `no-cache` so
+a deployment is picked up on the next navigation.
+
+### Client layer: `client/`
+
+The client is a Vite-built React application using MUI. It is a transport
+consumer, not part of the service's inward dependency flow.
+
+- `main.tsx` mounts React and installs the MUI theme and `CssBaseline`.
+- `theme.ts` owns the theme, including both colour schemes. The UI uses a system
+  font stack; do not introduce a runtime webfont request.
+- `api/` holds HTTP readers and their request-state hooks. A reader must
+  validate the response with the Zod schema exported from `src/application/`,
+  imported through the `@server/*` alias, so the client cannot drift from the
+  documented contract.
+- `components/` holds presentational components.
+
+Client sources are typechecked by `client/tsconfig.json` under browser
+libraries, and the Vite config by `client/tsconfig.node.json`. Both run in
+`npm run typecheck`. The client must not import Fastify, Kysely, PGlite, or
+anything under `src/` other than transport-neutral application contracts.
+
 ### Persistence layer: `src/db/`
 
 `database.ts` is the sole Kysely/PGlite construction boundary. Passing no
@@ -193,7 +255,9 @@ All supported environment variables belong in the Zod environment schema and
 than reading `process.env` throughout the codebase. Invalid configuration must
 fail during startup, before the server listens. Keep `MCP_ALLOWED_HOSTS`
 comma-separated in the environment and pass its parsed hostname list through
-`BuildAppOptions`.
+`BuildAppOptions`. `CLIENT_DIST_DIR` points at the built client and reaches the
+application as `BuildAppOptions.clientDistDir`; omitting that option disables
+static hosting entirely, which is what the API-only tests rely on.
 
 ### Shared Fastify types: `src/types/`
 
@@ -248,9 +312,14 @@ standalone CLI failure reporting before a Fastify logger is available.
 
 ## Testing architecture
 
-Vitest is the test runner. HTTP integration tests must call the public Fastify
-boundary through `app.inject()`; do not add Supertest or bind a test server to a
-real port.
+Vitest is the test runner, configured in `vitest.config.ts`. HTTP integration
+tests must call the public Fastify boundary through `app.inject()`; do not add
+Supertest or bind a test server to a real port.
+
+Test and hook timeouts are raised well above the Vitest defaults because each
+test file instantiates PGlite's WebAssembly build, which costs several seconds
+under the parallel suite. Keep that headroom when editing the configuration: the
+defaults make database-backed suites fail intermittently rather than reliably.
 
 Tests that need persistence should create their own in-memory PGlite database,
 apply migrations, inject it into `buildApp()`, and close the app after each test.
@@ -265,6 +334,12 @@ For a new endpoint, test at least:
 - the endpoint's presence and response in the generated OpenAPI document;
 - persistence behavior when the endpoint reads or writes data.
 
+Static hosting is tested through `app.inject()` against a temporary directory
+that stands in for a built bundle, so the suite never depends on `dist/client/`
+having been built. Any change to the shell fallback must keep coverage for both
+directions: a client-side route resolving to the shell, and an unknown API path
+still answering 404.
+
 For a new MCP tool, use the official in-memory client transport to test tool
 discovery, annotations, invocation, and structured output. Add `app.inject()`
 coverage when transport behavior changes. MCP HTTP tests must include relevant
@@ -276,15 +351,19 @@ Run the full required verification before handing off a change:
 npm run check
 ```
 
-This command runs strict type checking, all Vitest tests, and the production
-TypeScript build.
+This command runs strict type checking of the server, client, and Vite config,
+all Vitest tests, then the production TypeScript build followed by the Vite
+client build. `npm run build` must be run before `npm start` for the service to
+serve the client.
 
 ## TypeScript and module conventions
 
 - The project is ESM-only (`"type": "module"`).
-- Use NodeNext module resolution.
+- Use NodeNext module resolution for server code and bundler resolution for the
+  client.
 - Include `.js` extensions in relative TypeScript imports so compiled ESM works
-  in Node.js.
+  in Node.js. Client imports keep the same convention for consistency; Vite and
+  bundler resolution map them back to the `.ts`/`.tsx` sources.
 - Keep strict compiler settings enabled; do not suppress errors with `any` or
   unchecked type assertions when a precise type can be expressed.
 - Prefer type-only imports where a symbol is not needed at runtime.

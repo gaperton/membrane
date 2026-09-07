@@ -35,6 +35,7 @@ async function start(): Promise<void> {
     database,
     logger: createLoggerOptions(config.NODE_ENV),
     mcpAllowedHosts: config.MCP_ALLOWED_HOSTS,
+    clientDistDir: config.CLIENT_DIST_DIR,
   })
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {

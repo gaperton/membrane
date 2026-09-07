@@ -18,12 +18,14 @@ import {
   defaultMcpAllowedHosts,
   mcpRoutes,
 } from './mcp/routes.js'
+import { clientRoutes } from './routes/client.js'
 import { healthRoutes } from './routes/health.js'
 
 export interface BuildAppOptions {
   database: Kysely<Database>
   logger?: FastifyServerOptions['logger']
   mcpAllowedHosts?: string[]
+  clientDistDir?: string
 }
 
 export async function buildApp(
@@ -64,6 +66,10 @@ export async function buildApp(
     allowedHosts: options.mcpAllowedHosts ?? defaultMcpAllowedHosts,
     handler: mcpHandler,
   })
+
+  if (options.clientDistDir !== undefined) {
+    await app.register(clientRoutes, { distDir: options.clientDistDir })
+  }
 
   return app
 }
