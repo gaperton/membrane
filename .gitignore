@@ -5,3 +5,7 @@ data/
 .env
 *.log
 
+# Swift package build artifacts. Package.resolved is committed so the
+# generated client is reproducible from pinned dependency versions.
+swift/.build/
+swift/.swiftpm/

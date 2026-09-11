@@ -1,0 +1,6 @@
+# Types and client only: this package consumes the Membrane API, it does not
+# implement it. Regenerate the input document with `npm run openapi:export`.
+generate:
+  - types
+  - client
+accessModifier: internal

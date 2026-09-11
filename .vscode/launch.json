@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:membrane}/swift",
+            "name": "Debug membrane-cli (swift)",
+            "target": "membrane-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug membrane-cli (swift)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:membrane}/swift",
+            "name": "Release membrane-cli (swift)",
+            "target": "membrane-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release membrane-cli (swift)"
+        }
+    ]
+}

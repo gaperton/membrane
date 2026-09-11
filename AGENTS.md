@@ -12,7 +12,9 @@ boundaries. Zod schemas define runtime REST contracts and generate the OpenAPI
 3.1 document. The MCP server exposes application operations as tools through a
 Streamable HTTP endpoint. Kysely provides typed database access over an embedded
 PGlite database. A React single-page application built with Vite and MUI is
-served by the same Fastify process from `dist/client/`.
+served by the same Fastify process from `dist/client/`. A Swift package under
+`swift/` provides a native client generated from the service's own OpenAPI
+document.
 
 The main dependency flow is:
 
@@ -26,9 +28,10 @@ process entrypoint
   -> PGlite
 ```
 
-The browser client is a separate build target that consumes the same HTTP
-surface. It may import transport-neutral contracts from `src/application/`, but
-nothing under `src/` may import from `client/`.
+The browser and Swift clients are separate build targets that consume the same
+HTTP surface. The browser client may import transport-neutral contracts from
+`src/application/`; the Swift client is generated from the exported OpenAPI
+document. Nothing under `src/` may import from `client/` or `swift/`.
 
 Dependencies should continue to point inward from entrypoints and transport
 code toward application and persistence code. Lower-level modules must not
@@ -48,6 +51,18 @@ import the process entrypoint.
 ├── .node-version             Exact local Node.js version
 ├── .env.example              Supported environment variables and defaults
 ├── ecosystem.config.cjs      Single-process PM2 configuration
+├── swift/
+│   ├── Package.swift         Swift package manifest and dependency pins
+│   ├── Package.resolved      Resolved dependency versions
+│   ├── Scripts/
+│   │   └── run-tests.sh      Test runner with toolchain detection
+│   ├── Sources/
+│   │   ├── MembraneClient/   Published client library
+│   │   │   ├── openapi.json  Exported contract, input to code generation
+│   │   │   └── openapi-generator-config.yaml
+│   │   └── membrane-cli/     Executable that exercises the library
+│   └── Tests/
+│       └── MembraneClientTests/
 ├── client/
 │   ├── index.html            Single-page application document
 │   ├── vite.config.ts        Client build, dev server, and API proxy
@@ -70,6 +85,9 @@ import the process entrypoint.
 │   ├── routes/
 │   │   ├── health.ts         Health HTTP contract and handler
 │   │   └── client.ts         Static hosting for the built client
+│   ├── openapi/
+│   │   ├── document.ts       OpenAPI document generation and its committed path
+│   │   └── export.ts         Standalone document export command
 │   ├── mcp/
 │   │   ├── server.ts         MCP server factory and tool registration
 │   │   └── routes.ts         Streamable HTTP adapter and request protection
@@ -86,6 +104,7 @@ import the process entrypoint.
 └── tests/
     ├── health.test.ts        HTTP and OpenAPI integration contract
     ├── client.test.ts        Static hosting and API/shell boundary contract
+    ├── openapi.test.ts       Guard that the committed document is current
     ├── database.test.ts      Persistent database startup and migration test
     ├── mcp-http.test.ts      MCP HTTP transport and security contract
     └── mcp-server.test.ts    MCP tool discovery and invocation contract
@@ -96,6 +115,8 @@ The following directories are generated or local-only and must remain ignored:
 - `node_modules/` contains installed dependencies.
 - `dist/` contains compiled production JavaScript, declarations, and the
   client bundle in `dist/client/`.
+- `swift/.build/` and `swift/.swiftpm/` contain Swift build artifacts,
+  including the generated client sources.
 - `coverage/` contains generated test coverage.
 - `data/` contains the local persistent PGlite database.
 
@@ -207,6 +228,55 @@ Registration is skipped, with a warning, when the bundle is absent. This keeps
 `npm run dev:server` usable on its own while Vite serves the client. Hashed
 files under `assets/` are sent as immutable; the shell is sent as `no-cache` so
 a deployment is picked up on the next navigation.
+
+### Contract export: `src/openapi/`
+
+`document.ts` builds the application against a throwaway in-memory database and
+reads the OpenAPI document its route schemas generate. `export.ts` is the
+standalone command behind `npm run openapi:export`, mirroring how `migrate.ts`
+wraps the migrator.
+
+The exported document is committed at `swift/Sources/MembraneClient/openapi.json`
+because it is the Swift generator's input, and `tests/openapi.test.ts` fails
+when it drifts from what the application produces. Any route change therefore
+requires re-running the export in the same commit. Do not hand-edit the
+committed document.
+
+### Swift client: `swift/`
+
+A Swift package exposing `MembraneClient`, generated from the committed OpenAPI
+document by `swift-openapi-generator` at build time. Like the browser client it
+consumes the HTTP surface and is not part of the service's inward dependency
+flow.
+
+Generated code is produced with `accessModifier: internal`, so `Client`,
+`Components`, and `Operations` never escape the module. The published surface is
+hand-written and small:
+
+- `MembraneClient` wraps the generated client and exposes one method per
+  operation. A regenerated document therefore cannot change the package's public
+  API without a deliberate edit.
+- `HealthStatus` republishes the generated payload enum. Its initializer
+  switches exhaustively with no `default`, so a widened contract fails the build
+  instead of silently mapping to the wrong value.
+- `MembraneClientError` narrows `OpenAPIRuntime`'s `ClientError`, whose
+  description embeds the whole request and input, into `transportFailure` and
+  `unexpectedResponse`. `health()` uses typed `throws`, keeping the failure
+  contract in the signature.
+
+Keep this shape when adding operations: generate the transport, publish a
+hand-written method and model, and map the generated payload through an
+exhaustive switch.
+
+Tests use a stub `ClientTransport` and never bind a socket, mirroring the
+`app.inject()` rule on the service side. Run them with
+`swift/Scripts/run-tests.sh`, which adds the framework and rpath flags needed
+when a machine has only the Command Line Tools; swift-testing ships inside Xcode
+and `swift test` finds it unaided when a full Xcode is selected.
+
+The Swift package is deliberately outside `npm run check`: the toolchain is
+macOS-only, while `check` must run wherever the Node service builds. Run
+`npm run swift:test` alongside it when changing the contract or the package.
 
 ### Client layer: `client/`
 
@@ -334,6 +404,11 @@ For a new endpoint, test at least:
 - the endpoint's presence and response in the generated OpenAPI document;
 - persistence behavior when the endpoint reads or writes data.
 
+`tests/openapi.test.ts` compares the committed OpenAPI document with the one the
+application generates. It is the guard that keeps the Swift client's generated
+types honest, so a route change must be accompanied by `npm run openapi:export`
+in the same commit.
+
 Static hosting is tested through `app.inject()` against a temporary directory
 that stands in for a built bundle, so the suite never depends on `dist/client/`
 having been built. Any change to the shell fallback must keep coverage for both
@@ -355,6 +430,13 @@ This command runs strict type checking of the server, client, and Vite config,
 all Vitest tests, then the production TypeScript build followed by the Vite
 client build. `npm run build` must be run before `npm start` for the service to
 serve the client.
+
+`check` intentionally excludes the Swift package, which needs a macOS toolchain.
+When a change touches the API contract or `swift/`, also run:
+
+```bash
+npm run swift:test
+```
 
 ## TypeScript and module conventions
 
